@@ -1,0 +1,75 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: microservices-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: microservices.local
+    http:
+      paths:
+      - path: /auth(/|$)(.*)
+        pathType: Prefix
+        backend:
+          service:
+            name: auth-service
+            port:
+              number: 8081
+      - path: /payment(/|$)(.*)
+        pathType: Prefix
+        backend:
+          service:
+            name: payment-service
+            port:
+              number: 8082
+      - path: /balance(/|$)(.*)
+        pathType: Prefix
+        backend:
+          service:
+            name: balance-service
+            port:
+              number: 8083
+---
+# Alternative: NodePort Services for easy local access
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service-nodeport
+spec:
+  type: NodePort
+  ports:
+  - port: 8081
+    targetPort: 8081
+    nodePort: 30081
+  selector:
+    app: auth-service
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-service-nodeport
+spec:
+  type: NodePort
+  ports:
+  - port: 8082
+    targetPort: 8082
+    nodePort: 30082
+  selector:
+    app: payment-service
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: balance-service-nodeport
+spec:
+  type: NodePort
+  ports:
+  - port: 8083
+    targetPort: 8083
+    nodePort: 30083
+  selector:
+    app: balance-service
+

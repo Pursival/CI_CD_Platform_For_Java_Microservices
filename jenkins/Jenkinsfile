@@ -1,0 +1,756 @@
+pipeline {
+    agent any
+    
+    environment {
+        // Docker Registry Configuration
+        DOCKER_REGISTRY = 'localhost:5000'
+        REGISTRY_URL = 'http://localhost:5000'
+        
+        // Service Names
+        AUTH_SERVICE = 'auth-service'
+        PAYMENT_SERVICE = 'payment-service'
+        BALANCE_SERVICE = 'balance-service'
+        
+        // Docker Image Tags
+        IMAGE_TAG = "${BUILD_NUMBER}"
+        LATEST_TAG = 'latest'
+        
+        // Paths
+        SERVICES_DIR = 'services'
+        K8S_DIR = 'k8s'
+        
+        // Maven Options
+        MAVEN_OPTS = '-Dmaven.repo.local=.m2/repository'
+        
+        // Colors for logs (ANSI)
+        COLOR_GREEN = '\033[0;32m'
+        COLOR_YELLOW = '\033[1;33m'
+        COLOR_RED = '\033[0;31m'
+        COLOR_BLUE = '\033[0;34m'
+        COLOR_NC = '\033[0m' // No Color
+    }
+    
+    parameters {
+        choice(
+            name: 'DEPLOY_ENV',
+            choices: ['minikube', 'all'],
+            description: 'Target deployment environment'
+        )
+        booleanParam(
+            name: 'SKIP_TESTS',
+            defaultValue: false,
+            description: 'Skip unit tests for faster builds'
+        )
+        booleanParam(
+            name: 'CLEAN_BUILD',
+            defaultValue: false,
+            description: 'Clean Maven cache before build'
+        )
+        booleanParam(
+            name: 'FORCE_REDEPLOY',
+            defaultValue: false,
+            description: 'Force redeployment even if no changes'
+        )
+    }
+    
+    stages {
+        stage('🔍 Initialization') {
+            steps {
+                script {
+                    echo """
+                    ═══════════════════════════════════════════════════════════════
+                    🚀 CI/CD Pipeline Started
+                    ═══════════════════════════════════════════════════════════════
+                    Build Number:        ${BUILD_NUMBER}
+                    Image Tag:           ${IMAGE_TAG}
+                    Registry:            ${DOCKER_REGISTRY}
+                    Skip Tests:          ${params.SKIP_TESTS}
+                    Clean Build:         ${params.CLEAN_BUILD}
+                    Force Redeploy:      ${params.FORCE_REDEPLOY}
+                    Deployment Target:   ${params.DEPLOY_ENV}
+                    ═══════════════════════════════════════════════════════════════
+                    """
+                    
+                    // Verify required tools
+                    sh '''
+                        echo "Verifying required tools..."
+                        mvn --version || exit 1
+                        docker --version || exit 1
+                        kubectl version --client || exit 1
+                        echo "✅ All required tools are available"
+                    '''
+                }
+            }
+        }
+        
+        stage('📥 Checkout Code') {
+            steps {
+                script {
+                    echo """
+                    ═══════════════════════════════════════════════════════════════
+                    📥 CHECKOUT CODE
+                    ═══════════════════════════════════════════════════════════════
+                    """
+                    checkout scm
+                    
+                    // Display current commit info
+                    sh '''
+                        echo "Current Git commit:"
+                        git log -1 --pretty=format:"%h - %an, %ar : %s" || echo "Not a git repository"
+                    '''
+                }
+            }
+        }
+        
+        stage('🧹 Clean Workspace') {
+            when {
+                expression { params.CLEAN_BUILD == true }
+            }
+            steps {
+                script {
+                    echo """
+                    ═══════════════════════════════════════════════════════════════
+                    🧹 CLEAN WORKSPACE
+                    ═══════════════════════════════════════════════════════════════
+                    """
+                    
+                    sh """
+                        echo "Cleaning Maven repositories..."
+                        rm -rf ${SERVICES_DIR}/${AUTH_SERVICE}/target
+                        rm -rf ${SERVICES_DIR}/${PAYMENT_SERVICE}/target
+                        rm -rf ${SERVICES_DIR}/${BALANCE_SERVICE}/target
+                        rm -rf .m2/repository
+                        echo "✅ Workspace cleaned"
+                    """
+                }
+            }
+        }
+        
+        stage('🔨 Build & Test Services') {
+            parallel {
+                stage('Auth Service') {
+                    stages {
+                        stage('Build Auth') {
+                            steps {
+                                script {
+                                    echo """
+                                    ───────────────────────────────────────────────────────
+                                    🔨 Building ${AUTH_SERVICE}
+                                    ───────────────────────────────────────────────────────
+                                    """
+                                    
+                                    dir("${SERVICES_DIR}/${AUTH_SERVICE}") {
+                                        if (params.SKIP_TESTS) {
+                                            sh 'mvn clean package -DskipTests -B'
+                                        } else {
+                                            sh 'mvn clean package -B'
+                                        }
+                                    }
+                                    
+                                    echo "✅ ${AUTH_SERVICE} built successfully"
+                                }
+                            }
+                        }
+                        
+                        stage('Test Auth') {
+                            when {
+                                expression { params.SKIP_TESTS == false }
+                            }
+                            steps {
+                                script {
+                                    echo """
+                                    ───────────────────────────────────────────────────────
+                                    🧪 Testing ${AUTH_SERVICE}
+                                    ───────────────────────────────────────────────────────
+                                    """
+                                    
+                                    dir("${SERVICES_DIR}/${AUTH_SERVICE}") {
+                                        sh 'mvn test -B'
+                                    }
+                                    
+                                    echo "✅ ${AUTH_SERVICE} tests passed"
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                stage('Payment Service') {
+                    stages {
+                        stage('Build Payment') {
+                            steps {
+                                script {
+                                    echo """
+                                    ───────────────────────────────────────────────────────
+                                    🔨 Building ${PAYMENT_SERVICE}
+                                    ───────────────────────────────────────────────────────
+                                    """
+                                    
+                                    dir("${SERVICES_DIR}/${PAYMENT_SERVICE}") {
+                                        if (params.SKIP_TESTS) {
+                                            sh 'mvn clean package -DskipTests -B'
+                                        } else {
+                                            sh 'mvn clean package -B'
+                                        }
+                                    }
+                                    
+                                    echo "✅ ${PAYMENT_SERVICE} built successfully"
+                                }
+                            }
+                        }
+                        
+                        stage('Test Payment') {
+                            when {
+                                expression { params.SKIP_TESTS == false }
+                            }
+                            steps {
+                                script {
+                                    echo """
+                                    ───────────────────────────────────────────────────────
+                                    🧪 Testing ${PAYMENT_SERVICE}
+                                    ───────────────────────────────────────────────────────
+                                    """
+                                    
+                                    dir("${SERVICES_DIR}/${PAYMENT_SERVICE}") {
+                                        sh 'mvn test -B'
+                                    }
+                                    
+                                    echo "✅ ${PAYMENT_SERVICE} tests passed"
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                stage('Balance Service') {
+                    stages {
+                        stage('Build Balance') {
+                            steps {
+                                script {
+                                    echo """
+                                    ───────────────────────────────────────────────────────
+                                    🔨 Building ${BALANCE_SERVICE}
+                                    ───────────────────────────────────────────────────────
+                                    """
+                                    
+                                    dir("${SERVICES_DIR}/${BALANCE_SERVICE}") {
+                                        if (params.SKIP_TESTS) {
+                                            sh 'mvn clean package -DskipTests -B'
+                                        } else {
+                                            sh 'mvn clean package -B'
+                                        }
+                                    }
+                                    
+                                    echo "✅ ${BALANCE_SERVICE} built successfully"
+                                }
+                            }
+                        }
+                        
+                        stage('Test Balance') {
+                            when {
+                                expression { params.SKIP_TESTS == false }
+                            }
+                            steps {
+                                script {
+                                    echo """
+                                    ───────────────────────────────────────────────────────
+                                    🧪 Testing ${BALANCE_SERVICE}
+                                    ───────────────────────────────────────────────────────
+                                    """
+                                    
+                                    dir("${SERVICES_DIR}/${BALANCE_SERVICE}") {
+                                        sh 'mvn test -B'
+                                    }
+                                    
+                                    echo "✅ ${BALANCE_SERVICE} tests passed"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('🐳 Build Docker Images') {
+            parallel {
+                stage('Docker: Auth Service') {
+                    steps {
+                        script {
+                            echo """
+                            ───────────────────────────────────────────────────────
+                            🐳 Building Docker Image: ${AUTH_SERVICE}
+                            ───────────────────────────────────────────────────────
+                            """
+                            
+                            dir("${SERVICES_DIR}/${AUTH_SERVICE}") {
+                                sh """
+                                    docker build -t ${AUTH_SERVICE}:${IMAGE_TAG} .
+                                    docker tag ${AUTH_SERVICE}:${IMAGE_TAG} ${DOCKER_REGISTRY}/${AUTH_SERVICE}:${IMAGE_TAG}
+                                    docker tag ${AUTH_SERVICE}:${IMAGE_TAG} ${DOCKER_REGISTRY}/${AUTH_SERVICE}:${LATEST_TAG}
+                                """
+                            }
+                            
+                            echo "✅ Docker image for ${AUTH_SERVICE} built successfully"
+                        }
+                    }
+                }
+                
+                stage('Docker: Payment Service') {
+                    steps {
+                        script {
+                            echo """
+                            ───────────────────────────────────────────────────────
+                            🐳 Building Docker Image: ${PAYMENT_SERVICE}
+                            ───────────────────────────────────────────────────────
+                            """
+                            
+                            dir("${SERVICES_DIR}/${PAYMENT_SERVICE}") {
+                                sh """
+                                    docker build -t ${PAYMENT_SERVICE}:${IMAGE_TAG} .
+                                    docker tag ${PAYMENT_SERVICE}:${IMAGE_TAG} ${DOCKER_REGISTRY}/${PAYMENT_SERVICE}:${IMAGE_TAG}
+                                    docker tag ${PAYMENT_SERVICE}:${IMAGE_TAG} ${DOCKER_REGISTRY}/${PAYMENT_SERVICE}:${LATEST_TAG}
+                                """
+                            }
+                            
+                            echo "✅ Docker image for ${PAYMENT_SERVICE} built successfully"
+                        }
+                    }
+                }
+                
+                stage('Docker: Balance Service') {
+                    steps {
+                        script {
+                            echo """
+                            ───────────────────────────────────────────────────────
+                            🐳 Building Docker Image: ${BALANCE_SERVICE}
+                            ───────────────────────────────────────────────────────
+                            """
+                            
+                            dir("${SERVICES_DIR}/${BALANCE_SERVICE}") {
+                                sh """
+                                    docker build -t ${BALANCE_SERVICE}:${IMAGE_TAG} .
+                                    docker tag ${BALANCE_SERVICE}:${IMAGE_TAG} ${DOCKER_REGISTRY}/${BALANCE_SERVICE}:${IMAGE_TAG}
+                                    docker tag ${BALANCE_SERVICE}:${IMAGE_TAG} ${DOCKER_REGISTRY}/${BALANCE_SERVICE}:${LATEST_TAG}
+                                """
+                            }
+                            
+                            echo "✅ Docker image for ${BALANCE_SERVICE} built successfully"
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('📤 Push to Local Registry') {
+            parallel {
+                stage('Push: Auth Service') {
+                    steps {
+                        script {
+                            echo """
+                            ───────────────────────────────────────────────────────
+                            📤 Pushing ${AUTH_SERVICE} to registry
+                            ───────────────────────────────────────────────────────
+                            """
+                            
+                            sh """
+                                docker push ${DOCKER_REGISTRY}/${AUTH_SERVICE}:${IMAGE_TAG}
+                                docker push ${DOCKER_REGISTRY}/${AUTH_SERVICE}:${LATEST_TAG}
+                            """
+                            
+                            echo "✅ ${AUTH_SERVICE} pushed to registry"
+                        }
+                    }
+                }
+                
+                stage('Push: Payment Service') {
+                    steps {
+                        script {
+                            echo """
+                            ───────────────────────────────────────────────────────
+                            📤 Pushing ${PAYMENT_SERVICE} to registry
+                            ───────────────────────────────────────────────────────
+                            """
+                            
+                            sh """
+                                docker push ${DOCKER_REGISTRY}/${PAYMENT_SERVICE}:${IMAGE_TAG}
+                                docker push ${DOCKER_REGISTRY}/${PAYMENT_SERVICE}:${LATEST_TAG}
+                            """
+                            
+                            echo "✅ ${PAYMENT_SERVICE} pushed to registry"
+                        }
+                    }
+                }
+                
+                stage('Push: Balance Service') {
+                    steps {
+                        script {
+                            echo """
+                            ───────────────────────────────────────────────────────
+                            📤 Pushing ${BALANCE_SERVICE} to registry
+                            ───────────────────────────────────────────────────────
+                            """
+                            
+                            sh """
+                                docker push ${DOCKER_REGISTRY}/${BALANCE_SERVICE}:${IMAGE_TAG}
+                                docker push ${DOCKER_REGISTRY}/${BALANCE_SERVICE}:${LATEST_TAG}
+                            """
+                            
+                            echo "✅ ${BALANCE_SERVICE} pushed to registry"
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('🚀 Deploy to Minikube') {
+            when {
+                expression { params.DEPLOY_ENV == 'minikube' || params.DEPLOY_ENV == 'all' }
+            }
+            stages {
+                stage('Pre-deployment Check') {
+                    steps {
+                        script {
+                            echo """
+                            ═══════════════════════════════════════════════════════════════
+                            🚀 DEPLOY TO MINIKUBE - PRE-DEPLOYMENT CHECKS
+                            ═══════════════════════════════════════════════════════════════
+                            """
+                            
+                            sh '''
+                                echo "Checking Kubernetes cluster connectivity..."
+                                kubectl cluster-info || (echo "❌ Cannot connect to Kubernetes cluster" && exit 1)
+                                
+                                echo "Checking if Minikube is running..."
+                                minikube status || (echo "⚠️ Minikube might not be running" && exit 0)
+                                
+                                echo "Current kubectl context:"
+                                kubectl config current-context
+                                
+                                echo "Available nodes:"
+                                kubectl get nodes
+                                
+                                echo "✅ Pre-deployment checks passed"
+                            '''
+                        }
+                    }
+                }
+                
+                stage('Deploy Auth Service') {
+                    steps {
+                        script {
+                            echo """
+                            ───────────────────────────────────────────────────────
+                            🚀 Deploying ${AUTH_SERVICE} to Minikube
+                            ───────────────────────────────────────────────────────
+                            """
+                            
+                            sh """
+                                echo "Applying Kubernetes manifests for ${AUTH_SERVICE}..."
+                                kubectl apply -f ${K8S_DIR}/${AUTH_SERVICE}/deployment.yaml
+                                kubectl apply -f ${K8S_DIR}/${AUTH_SERVICE}/service.yaml
+                                kubectl apply -f ${K8S_DIR}/${AUTH_SERVICE}/ingress.yaml
+                                
+                                echo "Waiting for ${AUTH_SERVICE} deployment to be ready..."
+                                kubectl rollout status deployment/${AUTH_SERVICE} --timeout=300s
+                                
+                                echo "Deployment status:"
+                                kubectl get deployment ${AUTH_SERVICE}
+                                kubectl get pods -l app=${AUTH_SERVICE}
+                            """
+                            
+                            echo "✅ ${AUTH_SERVICE} deployed successfully"
+                        }
+                    }
+                }
+                
+                stage('Deploy Payment Service') {
+                    steps {
+                        script {
+                            echo """
+                            ───────────────────────────────────────────────────────
+                            🚀 Deploying ${PAYMENT_SERVICE} to Minikube
+                            ───────────────────────────────────────────────────────
+                            """
+                            
+                            sh """
+                                echo "Applying Kubernetes manifests for ${PAYMENT_SERVICE}..."
+                                kubectl apply -f ${K8S_DIR}/${PAYMENT_SERVICE}/deployment.yaml
+                                kubectl apply -f ${K8S_DIR}/${PAYMENT_SERVICE}/service.yaml
+                                kubectl apply -f ${K8S_DIR}/${PAYMENT_SERVICE}/ingress.yaml
+                                
+                                echo "Waiting for ${PAYMENT_SERVICE} deployment to be ready..."
+                                kubectl rollout status deployment/${PAYMENT_SERVICE} --timeout=300s
+                                
+                                echo "Deployment status:"
+                                kubectl get deployment ${PAYMENT_SERVICE}
+                                kubectl get pods -l app=${PAYMENT_SERVICE}
+                            """
+                            
+                            echo "✅ ${PAYMENT_SERVICE} deployed successfully"
+                        }
+                    }
+                }
+                
+                stage('Deploy Balance Service') {
+                    steps {
+                        script {
+                            echo """
+                            ───────────────────────────────────────────────────────
+                            🚀 Deploying ${BALANCE_SERVICE} to Minikube
+                            ───────────────────────────────────────────────────────
+                            """
+                            
+                            sh """
+                                echo "Applying Kubernetes manifests for ${BALANCE_SERVICE}..."
+                                kubectl apply -f ${K8S_DIR}/${BALANCE_SERVICE}/deployment.yaml
+                                kubectl apply -f ${K8S_DIR}/${BALANCE_SERVICE}/service.yaml
+                                kubectl apply -f ${K8S_DIR}/${BALANCE_SERVICE}/ingress.yaml
+                                
+                                echo "Waiting for ${BALANCE_SERVICE} deployment to be ready..."
+                                kubectl rollout status deployment/${BALANCE_SERVICE} --timeout=300s
+                                
+                                echo "Deployment status:"
+                                kubectl get deployment ${BALANCE_SERVICE}
+                                kubectl get pods -l app=${BALANCE_SERVICE}
+                            """
+                            
+                            echo "✅ ${BALANCE_SERVICE} deployed successfully"
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('✅ Verify Deployment') {
+            when {
+                expression { params.DEPLOY_ENV == 'minikube' || params.DEPLOY_ENV == 'all' }
+            }
+            steps {
+                script {
+                    echo """
+                    ═══════════════════════════════════════════════════════════════
+                    ✅ VERIFY DEPLOYMENT
+                    ═══════════════════════════════════════════════════════════════
+                    """
+                    
+                    sh '''
+                        echo "═══════════════════════════════════════════════════════════════"
+                        echo "📊 DEPLOYMENT SUMMARY"
+                        echo "═══════════════════════════════════════════════════════════════"
+                        
+                        echo ""
+                        echo "🔹 Pods Status:"
+                        kubectl get pods -o wide
+                        
+                        echo ""
+                        echo "🔹 Services:"
+                        kubectl get services
+                        
+                        echo ""
+                        echo "🔹 Deployments:"
+                        kubectl get deployments
+                        
+                        echo ""
+                        echo "🔹 Ingress:"
+                        kubectl get ingress
+                        
+                        echo ""
+                        echo "🔹 Events (last 10):"
+                        kubectl get events --sort-by='.lastTimestamp' | tail -10
+                        
+                        echo ""
+                        echo "═══════════════════════════════════════════════════════════════"
+                        echo "🎯 ACCESS INFORMATION"
+                        echo "═══════════════════════════════════════════════════════════════"
+                        
+                        MINIKUBE_IP=$(minikube ip 2>/dev/null || echo "N/A")
+                        
+                        echo ""
+                        echo "Minikube IP: ${MINIKUBE_IP}"
+                        echo ""
+                        echo "Service Endpoints:"
+                        echo "  🔐 Auth Service:    http://${MINIKUBE_IP}:30081/health"
+                        echo "  💳 Payment Service: http://${MINIKUBE_IP}:30082/health"
+                        echo "  💰 Balance Service: http://${MINIKUBE_IP}:30083/health"
+                        echo ""
+                        echo "Ingress Hosts:"
+                        echo "  🔐 Auth:    http://auth.local (add to /etc/hosts)"
+                        echo "  💳 Payment: http://payment.local (add to /etc/hosts)"
+                        echo "  💰 Balance: http://balance.local (add to /etc/hosts)"
+                        echo ""
+                        echo "═══════════════════════════════════════════════════════════════"
+                        
+                        # Health check
+                        echo ""
+                        echo "🏥 Health Checks:"
+                        
+                        for service in auth payment balance; do
+                            port=$((30080 + $(echo ${service} | wc -c)))
+                            if [ "$service" = "auth" ]; then port=30081; fi
+                            if [ "$service" = "payment" ]; then port=30082; fi
+                            if [ "$service" = "balance" ]; then port=30083; fi
+                            
+                            echo -n "  ${service}-service: "
+                            curl -s -o /dev/null -w "%{http_code}" http://${MINIKUBE_IP}:${port}/health || echo "N/A"
+                        done
+                        
+                        echo ""
+                        echo "═══════════════════════════════════════════════════════════════"
+                    '''
+                }
+            }
+        }
+        
+        stage('📊 Generate Report') {
+            steps {
+                script {
+                    echo """
+                    ═══════════════════════════════════════════════════════════════
+                    📊 BUILD REPORT
+                    ═══════════════════════════════════════════════════════════════
+                    """
+                    
+                    sh """
+                        echo "Build Summary:"
+                        echo "  Build Number: ${BUILD_NUMBER}"
+                        echo "  Image Tag: ${IMAGE_TAG}"
+                        echo "  Services Built: ${AUTH_SERVICE}, ${PAYMENT_SERVICE}, ${BALANCE_SERVICE}"
+                        echo "  Registry: ${DOCKER_REGISTRY}"
+                        echo "  Tests Skipped: ${params.SKIP_TESTS}"
+                        echo "  Clean Build: ${params.CLEAN_BUILD}"
+                        
+                        echo ""
+                        echo "Docker Images:"
+                        docker images | grep -E '(${AUTH_SERVICE}|${PAYMENT_SERVICE}|${BALANCE_SERVICE})' | grep ${IMAGE_TAG} || echo "No images found"
+                        
+                        echo ""
+                        echo "Registry Images:"
+                        curl -s ${REGISTRY_URL}/v2/_catalog | grep -E '(${AUTH_SERVICE}|${PAYMENT_SERVICE}|${BALANCE_SERVICE})' || echo "Registry API unavailable"
+                    """
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            script {
+                echo """
+                ═══════════════════════════════════════════════════════════════
+                ✅ PIPELINE COMPLETED SUCCESSFULLY!
+                ═══════════════════════════════════════════════════════════════
+                
+                🎉 All stages completed without errors!
+                
+                Build Information:
+                  - Build Number: ${BUILD_NUMBER}
+                  - Image Tag: ${IMAGE_TAG}
+                  - Duration: ${currentBuild.durationString}
+                
+                Services Deployed:
+                  ✅ ${AUTH_SERVICE}
+                  ✅ ${PAYMENT_SERVICE}
+                  ✅ ${BALANCE_SERVICE}
+                
+                Next Steps:
+                  1. Verify services are running: kubectl get pods
+                  2. Test endpoints using Minikube IP
+                  3. Monitor logs: kubectl logs -f <pod-name>
+                
+                ═══════════════════════════════════════════════════════════════
+                """
+                
+                // Optional: Send success notification
+                // (Can be configured with email, Slack, etc.)
+            }
+        }
+        
+        failure {
+            script {
+                echo """
+                ═══════════════════════════════════════════════════════════════
+                ❌ PIPELINE FAILED!
+                ═══════════════════════════════════════════════════════════════
+                
+                Build Information:
+                  - Build Number: ${BUILD_NUMBER}
+                  - Failed Stage: ${env.STAGE_NAME}
+                  - Duration: ${currentBuild.durationString}
+                
+                Troubleshooting:
+                  1. Check the console output above for error details
+                  2. Verify all services are accessible
+                  3. Check Docker daemon is running
+                  4. Verify Minikube is running: minikube status
+                  5. Check kubectl can connect: kubectl cluster-info
+                
+                Common Issues:
+                  - Maven build failures: Check pom.xml and dependencies
+                  - Docker build failures: Check Dockerfile syntax
+                  - Deployment failures: Check Kubernetes manifests
+                  - Registry push failures: Verify registry is running
+                
+                ═══════════════════════════════════════════════════════════════
+                """
+                
+                // Optional: Send failure notification
+                // emailext subject: "Pipeline Failed: ${env.JOB_NAME} - ${env.BUILD_NUMBER}",
+                //          body: "Check console output at ${env.BUILD_URL}",
+                //          to: "your-email@example.com"
+            }
+        }
+        
+        unstable {
+            script {
+                echo """
+                ═══════════════════════════════════════════════════════════════
+                ⚠️ PIPELINE UNSTABLE
+                ═══════════════════════════════════════════════════════════════
+                
+                Some tests may have failed, but the build continued.
+                Please review the test results and fix any issues.
+                
+                ═══════════════════════════════════════════════════════════════
+                """
+            }
+        }
+        
+        always {
+            script {
+                echo """
+                ═══════════════════════════════════════════════════════════════
+                🧹 CLEANUP
+                ═══════════════════════════════════════════════════════════════
+                """
+                
+                // Cleanup dangling Docker images
+                sh '''
+                    echo "Cleaning up dangling Docker images..."
+                    docker image prune -f || true
+                    
+                    echo "Removing old build artifacts..."
+                    # Keep last 5 builds worth of images
+                    # docker images | grep '<none>' | awk '{print $3}' | xargs -r docker rmi || true
+                    
+                    echo "✅ Cleanup completed"
+                '''
+                
+                // Archive test results if tests were run
+                if (params.SKIP_TESTS == false) {
+                    echo "Archiving test results..."
+                    junit allowEmptyResults: true, testResults: '**/target/surefire-reports/*.xml'
+                }
+                
+                echo """
+                ═══════════════════════════════════════════════════════════════
+                📝 PIPELINE FINISHED
+                ═══════════════════════════════════════════════════════════════
+                Build Status: ${currentBuild.result}
+                Duration: ${currentBuild.durationString}
+                Timestamp: ${new Date()}
+                ═══════════════════════════════════════════════════════════════
+                """
+            }
+        }
+    }
+}
