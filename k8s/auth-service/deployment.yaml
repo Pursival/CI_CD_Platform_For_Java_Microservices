@@ -16,19 +16,19 @@ spec:
     spec:
       containers:
       - name: auth-service
-        image: localhost:5000/auth-service:latest
-        imagePullPolicy: Always
+        image: auth-service:latest
+        imagePullPolicy: Never
         ports:
         - containerPort: 8081
         livenessProbe:
           httpGet:
-            path: /health
+            path: /api/auth/health
             port: 8081
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           httpGet:
-            path: /health
+            path: /api/auth/health
             port: 8081
           initialDelaySeconds: 20
           periodSeconds: 5

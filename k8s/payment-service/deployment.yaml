@@ -16,19 +16,22 @@ spec:
     spec:
       containers:
       - name: payment-service
-        image: localhost:5000/payment-service:latest
-        imagePullPolicy: Always
+        image: payment-service:latest
+        imagePullPolicy: Never
+        env:
+        - name: BALANCE_SERVICE_URL
+          value: "http://balance-service:8083"
         ports:
         - containerPort: 8082
         livenessProbe:
           httpGet:
-            path: /health
+            path: /api/payment/health
             port: 8082
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           httpGet:
-            path: /health
+            path: /api/payment/health
             port: 8082
           initialDelaySeconds: 20
           periodSeconds: 5

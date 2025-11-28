@@ -5,6 +5,13 @@ spring:
   application:
     name: payment-service
 
+# Service URLs for inter-service communication
+# In Kubernetes: use service name (e.g., balance-service:8083)
+# Locally: use localhost:8083
+services:
+  balance:
+    url: ${BALANCE_SERVICE_URL:http://localhost:8083}
+
 management:
   endpoints:
     web:
