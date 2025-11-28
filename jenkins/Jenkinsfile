@@ -16,7 +16,7 @@ pipeline {
         LATEST_TAG = 'latest'
         
         // Paths
-        SERVICES_DIR = 'services'
+        SERVICES_DIR = 'microservices'
         K8S_DIR = 'k8s'
         
         // Maven Options
